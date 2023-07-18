@@ -74,19 +74,6 @@ resource "aws_internet_gateway" "gw" {
    }
  }
 
-# Create an AWS launch configuration
-
-#  resource "aws_launch_configuration" "launch_conf" {
-#    image_id = "ami-06b09bfacae1453cb"
-#    instance_type = "t2.micro"
-#    key_name = "AF_key"
-#    security_groups = ["security_terraform"]
- 
-#    lifecycle {
-#        create_before_destroy = true
-#    }
-#  }
-
 # Create an AWS launch template
 
  resource "aws_launch_template" "launch_temp" {
@@ -103,7 +90,6 @@ resource "aws_internet_gateway" "gw" {
 
  resource "aws_elb" "ELB" {
    name = "ELB"
-  #  availability_zones = ["us-east-1a", "us-east-1b"]
    subnets = [aws_subnet.subnet_a.id, aws_subnet.subnet_b.id]
  
    listener {
@@ -135,11 +121,24 @@ resource "aws_internet_gateway" "gw" {
    launch_template {
     id = aws_launch_template.launch_temp.id
    }
- 
-  #  lifecycle {
-  #      create_before_destroy = true
-  #  }
  }
+
+resource "aws_autoscaling_schedule" "start_time" {
+  scheduled_action_name  = "start_time"
+  min_size               = 1
+  max_size               = 4
+  desired_capacity       = 2
+  recurrence = "0 9 * * MON-FRI"
+  autoscaling_group_name = aws_autoscaling_group.asg.name
+}
+resource "aws_autoscaling_schedule" "end_time" {
+  scheduled_action_name  = "end_time"
+  min_size               = 0
+  max_size               = 1
+  desired_capacity       = 0
+  recurrence = "0 18 * * MON-FRI"
+  autoscaling_group_name = aws_autoscaling_group.asg.name
+}
 
  output "elb_dns_name" {
  value = aws_elb.ELB.dns_name
