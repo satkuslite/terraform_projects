@@ -14,8 +14,6 @@ terraform {
 provider "aws" {
    
    region     = "us-east-1"
-   access_key = ""
-   secret_key = ""
 }
 
 # Create VPC
@@ -36,11 +34,18 @@ resource "aws_subnet" "subnet_b" {
   availability_zone       = "us-east-1b"
 }
 
+resource "aws_internet_gateway" "gw" {
+  vpc_id = aws_vpc.vpc.id
+
+  tags = {
+    Name = "main_gw"
+  }
+}
 # Security group
 
  resource "aws_security_group" "security_terraform" {
    name = "security_terraform"
-   vpc_id = "aws_vpc.vpc.id"
+   vpc_id = aws_vpc.vpc.id
    description = "security group for terraform"
  
    ingress {
@@ -71,37 +76,35 @@ resource "aws_subnet" "subnet_b" {
 
 # Create an AWS launch configuration
 
- resource "aws_launch_configuration" "launch_conf" {
+#  resource "aws_launch_configuration" "launch_conf" {
+#    image_id = "ami-06b09bfacae1453cb"
+#    instance_type = "t2.micro"
+#    key_name = "AF_key"
+#    security_groups = ["security_terraform"]
+ 
+#    lifecycle {
+#        create_before_destroy = true
+#    }
+#  }
+
+# Create an AWS launch template
+
+ resource "aws_launch_template" "launch_temp" {
    image_id = "ami-06b09bfacae1453cb"
    instance_type = "t2.micro"
    key_name = "AF_key"
-   security_groups = ["security_terraform"]
- 
-   lifecycle {
-       create_before_destroy = true
-   }
+   depends_on = [aws_internet_gateway.gw]
+   vpc_security_group_ids = [aws_security_group.security_terraform.id]
  }
 
-# Create an AWS auto scaling group
 
- resource "aws_autoscaling_group" "asg" {
-   availability_zones = ["us-east-1a", "us-east-1b"]
-   desired_capacity = 2
-   max_size = 4
-   min_size = 1
-   load_balancers = [aws_elb.ELB.id]
-   launch_configuration = aws_launch_configuration.launch_conf.id
- 
-   lifecycle {
-       create_before_destroy = true
-   }
- }
 
 # Create AWS ELB resource
 
  resource "aws_elb" "ELB" {
    name = "ELB"
-   availability_zones = ["us-east-1a", "us-east-1b"]
+  #  availability_zones = ["us-east-1a", "us-east-1b"]
+   subnets = [aws_subnet.subnet_a.id, aws_subnet.subnet_b.id]
  
    listener {
      instance_port = 80
@@ -118,6 +121,24 @@ resource "aws_subnet" "subnet_b" {
    tags = {
      Name = "ELB"
    }
+ }
+
+# Create an AWS auto scaling group
+
+ resource "aws_autoscaling_group" "asg" {
+  #  availability_zones = ["us-east-1a", "us-east-1b"]
+   vpc_zone_identifier = [aws_subnet.subnet_a.id, aws_subnet.subnet_b.id,]
+   desired_capacity = 2
+   max_size = 4
+   min_size = 1
+   load_balancers = [aws_elb.ELB.id]
+   launch_template {
+    id = aws_launch_template.launch_temp.id
+   }
+ 
+  #  lifecycle {
+  #      create_before_destroy = true
+  #  }
  }
 
  output "elb_dns_name" {
