@@ -37,6 +37,7 @@ resource "aws_subnet" "subnet_b" {
   availability_zone = "us-east-1b"
 }
 
+# Internet gateway for VPC
 resource "aws_internet_gateway" "gw" {
   vpc_id = aws_vpc.vpc.id
 
@@ -44,12 +45,11 @@ resource "aws_internet_gateway" "gw" {
     Name = "main_gw"
   }
 }
-# Security group
 
-resource "aws_security_group" "security_terraform" {
-  description = "security group for terraform"
-  name        = "security_terraform"
-  vpc_id      = aws_vpc.vpc.id
+# Security group for instances
+resource "aws_security_group" "sg_instance" {
+  name   = "sg_instance"
+  vpc_id = aws_vpc.vpc.id
 
   ingress {
     from_port   = 8080
@@ -57,76 +57,116 @@ resource "aws_security_group" "security_terraform" {
     protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
   }
-  ingress {
-    from_port   = 22
-    to_port     = 22
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  #  egress {
-  #    from_port = 0
-  #    to_port = 65535
-  #    protocol = "tcp"
-  #    cidr_blocks = ["0.0.0.0/0"]
-  #  }
-
   tags = {
     Name = var.special_tag
   }
 }
 
 # Create an AWS launch template
-
 resource "aws_launch_template" "launch_temp" {
   image_id               = var.ami
   instance_type          = var.instance_type
   key_name               = var.key
   depends_on             = [aws_internet_gateway.gw]
-  vpc_security_group_ids = [aws_security_group.security_terraform.id]
+  vpc_security_group_ids = [aws_security_group.sg_instance.id]
   user_data              = filebase64("micro_web.sh")
   lifecycle {
     create_before_destroy = true
   }
 }
 
+# Create an AWS load balancer listener and rules
+resource "aws_lb_listener" "http" {
+  load_balancer_arn = aws_lb.load_balancer.arn
+  port              = 80
+  protocol          = "HTTP"
 
+  default_action {
+    type = "fixed-response"
 
-# Create AWS ELB resource
-
-resource "aws_elb" "ELB" {
-  subnets = [aws_subnet.subnet_a.id, aws_subnet.subnet_b.id]
-
-  listener {
-    instance_port     = 80
-    instance_protocol = "http"
-    lb_port           = 80
-    lb_protocol       = "http"
+    fixed_response {
+      content_type = "text/plain"
+      message_body = "404"
+      status_code  = 404
+    }
   }
+}
 
-  cross_zone_load_balancing   = true
-  idle_timeout                = 400
-  connection_draining         = true
-  connection_draining_timeout = 400
+resource "aws_lb_listener_rule" "instances" {
+  listener_arn = aws_lb_listener.http.arn
+  priority     = 100
+  condition {
+    path_pattern {
+      values = ["*"]
+    }
+  }
+  action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.test.arn
+  }
+}
 
+# Target group for load balancer
+resource "aws_lb_target_group" "test" {
+  name     = "testing"
+  port     = 8080
+  protocol = "HTTP"
+  vpc_id   = aws_vpc.vpc.id
+
+  health_check {
+    path                = "/"
+    protocol            = "HTTP"
+    matcher             = "200"
+    interval            = 15
+    timeout             = 3
+    healthy_threshold   = 2
+    unhealthy_threshold = 2
+  }
+}
+
+# Security group for load balancer
+resource "aws_security_group" "sg_alb" {
+  name   = "sg_alb"
+  vpc_id = aws_vpc.vpc.id
+
+  ingress {
+    from_port   = 80
+    to_port     = 80
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
   tags = {
     Name = var.special_tag
   }
 }
 
-# Create an AWS auto scaling group
 
+# Initiating Application load balancer itself
+resource "aws_lb" "load_balancer" {
+  load_balancer_type = "application"
+  subnets            = [aws_subnet.subnet_a.id, aws_subnet.subnet_b.id]
+  security_groups    = [aws_security_group.sg_alb.id]
+}
+
+# Autoscaling group
 resource "aws_autoscaling_group" "asg" {
   vpc_zone_identifier = [aws_subnet.subnet_a.id, aws_subnet.subnet_b.id, ]
   desired_capacity    = 2
   max_size            = 4
   min_size            = 1
-  load_balancers      = [aws_elb.ELB.id]
+  target_group_arns   = [aws_lb_target_group.test.arn]
   launch_template {
     id = aws_launch_template.launch_temp.id
   }
 }
 
+#Scedule to make autoscaling group turn on and shutdown instances
 resource "aws_autoscaling_schedule" "start_time" {
   scheduled_action_name  = "start_time"
   min_size               = 1
@@ -145,5 +185,5 @@ resource "aws_autoscaling_schedule" "end_time" {
 }
 
 output "elb_dns_name" {
-  value = aws_elb.ELB.dns_name
+  value = aws_lb.load_balancer.dns_name
 }
