@@ -2,10 +2,10 @@
 Projects for terraform
 
 Dependencies:
-Terraform
+Terraform,
 AWS CLI
 
 Start with: 
-terraform init
-terraform plan
+terraform init,
+terraform plan,
 terraform apply 
